@@ -18,7 +18,7 @@ def invert(M, eps):
     invM[..., 1, 1] = invDet*M[..., 0, 0]
     return invM, np.abs(detM)
 
-def alpha_denoise(sig, L, alpha):
+def alpha_denoise(sig, L, alpha,name):
     """Denoising with the multichannel alpha-stable + NMF model.
     sig is N X K
     L is the number of components """
@@ -29,16 +29,16 @@ def alpha_denoise(sig, L, alpha):
     # parameters
     nfft = 1024
     niter = 100
-    nmh = 5
-    nmh_burnin = 0
+    nmh = 40
+    nmh_burnin = 30
 
     # compute STFT of Mixture
     N = sig.shape[0]  # remember number of samples for future use
     X = stft(sig.T, nperseg=nfft)[-1]
     X = np.moveaxis(X,0,2)
 
-    #sigma = 1e-4
-    sigma = np.percentile(np.abs(X), 30)
+    sigma = 4e-6
+    #sigma = np.percentile(np.abs(X), 30)
     print(sigma)
 
     Xconj = X.conj()
@@ -127,14 +127,12 @@ def alpha_denoise(sig, L, alpha):
         for k in range(K):
             Ys += G[..., k]*X[..., k, None]
 
-        Ys = np.rollaxis(Ys, -1)  # gets channels back in first position
 
         # inverte to time domain and return signal
+        Ys = np.rollaxis(Ys, -1)  # gets channels back in first position
         target_estimate = istft(Ys)[1].T[:N, :]
         from . import wav
-        wav.wavwrite(target_estimate,16000,'test.wav')
-        #import ipdb; ipdb.set_trace()
-
+        wav.wavwrite(target_estimate,16000,"denoise"+name,verbose=False)
 
         # 2/ update of  NMF Parameters
         def trRM(R,M):
@@ -145,21 +143,21 @@ def alpha_denoise(sig, L, alpha):
                 res += np.sum(R[:,None,k,:] * M[...,k], axis = -1)
             return res
 
-        zp = np.maximum(0, trRM(R,P).real)
-        zo = np.maximum(0, trRM(R,O).real)
-        print('\n',norm(zp),norm(zo),'normes zp zo')
+        zp = np.maximum(eps, trRM(R,P).real)
+        zo = np.maximum(eps, trRM(R,O).real)
+        #print('\n',norm(zp),norm(zo),'normes zp zo')
 
         #update W
         num = np.dot(zp,H.T)
         denum = np.dot(zo,H.T)
         W = W *  np.sqrt((eps+num)/(eps+denum))
-        print('\n',norm(num),norm(denum),'normes num denum W')
+        #print('\n',norm(num),norm(denum),'normes num denum W')
 
         #update H
         num = np.dot(W.T,zp)
         denum = np.dot(W.T,zo)
         H *= np.sqrt((eps+num)/(eps+denum))
-        print('\n',norm(num),norm(denum),'normes num denum H')
+        #print('\n',norm(num),norm(denum),'normes num denum H')
 
         # update our model for the mix covariance matrix
         Cx = compute_Cs() + compute_Cn(I)
@@ -178,7 +176,7 @@ def alpha_denoise(sig, L, alpha):
 
         UH = np.zeros((F,K,K),dtype = np.complex128)
         UG = np.zeros((F,K,K),dtype = np.complex128)
-        for f in tqdm.tqdm(range(F)):
+        for f in range(F):
             indices = np.nonzero(eig_values[f] <= 0)
             if not len(indices[0]):
                 import ipdb; ipdb.set_trace()
@@ -189,8 +187,6 @@ def alpha_denoise(sig, L, alpha):
 
         #R = 0.5*(R+np.einsum('fab->fba',R.conj()))
         #R /= np.trace(R,axis1=1,axis2=2)[...,None,None]
-
-
 
         # Update our model for the mix covariance matrix
         Cx = compute_Cs() + compute_Cn(I)
