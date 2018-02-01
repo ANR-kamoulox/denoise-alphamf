@@ -28,7 +28,7 @@ def alpha_denoise(sig, L, alpha,name):
 
     # parameters
     nfft = 1024
-    niter = 100
+    niter = 40
     nmh = 40
     nmh_burnin = 30
 
@@ -37,7 +37,7 @@ def alpha_denoise(sig, L, alpha,name):
     X = stft(sig.T, nperseg=nfft)[-1]
     X = np.moveaxis(X,0,2)
 
-    sigma = 4e-6
+    sigma = 2e-6
     #sigma = np.percentile(np.abs(X), 30)
     print(sigma)
 
@@ -131,8 +131,26 @@ def alpha_denoise(sig, L, alpha,name):
         # inverte to time domain and return signal
         Ys = np.rollaxis(Ys, -1)  # gets channels back in first position
         target_estimate = istft(Ys)[1].T[:N, :]
+
+        # Stereo to mono stuff
+        Varxphi = CxxC(G) + Cs - dot(G,Cs) #(F, T, K, K) Total variation
+        Varxphi = np.mean(Varxphi, axis=1) #(F, K, K)
+
+        (eig_values, eig_vectors) = np.linalg.eig(Varxphi)
+        U = np.zeros((F, K)).astype(np.complex64) #(F,K) which contains principal eigenvectors
+        for f in range(F):
+            indice = np.nonzero(eig_values[f].max())
+            U[f] = eig_vectors[f,indice[0]]
+
+        S =np.sum((U.T).conj()[..., None] * Ys, axis=0)  # (F, T)
+        speech_estimate = np.array(istft(S)[1])[:N]
+
+
+
+
         from . import wav
         wav.wavwrite(target_estimate,16000,"denoise"+name,verbose=False)
+        wav.wavwrite(speech_estimate[:,None], 16000, "speech"+name, verbose=False)
 
         # 2/ update of  NMF Parameters
         def trRM(R,M):

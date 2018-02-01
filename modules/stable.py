@@ -34,34 +34,39 @@ def random(alpha, beta, mu, sigma, shape, seed = None):
         U = np.random.uniform(-np.pi / 2., np.pi / 2., shape)
 
         c = -beta * np.tan(np.pi * alpha / 2.)
-        if beta != 1:
+        if alpha != 1:
             ksi = 1 / alpha * np.arctan(-c)
+            res = ((1. + c ** 2) ** (1. / 2. * alpha)) * np.sin(alpha * (U + ksi)) / ((np.cos(U)) ** (1. / alpha)) \
+                  * ((np.cos(U - alpha * (U + ksi))) / W) ** ((1. - alpha) / alpha)
+
         else:
             ksi = np.pi / 2.
+            res = (1. / ksi) * ((np.pi / 2. + beta * U) * np.tan(U) -
+                                beta * np.log((np.pi / 2. * W * np.cos(U)) / (np.pi / 2. + beta * U)))
 
-        res = ((1. + c ** 2) ** (1. / 2. / alpha)) * np.sin(alpha * (U + ksi)) / ((np.cos(U)) ** (1. / alpha)) * ((
-                                                                                                                  np.cos(
-                                                                                                                      U - alpha * (
-                                                                                                                      U + ksi))) / W) ** (
-                                                                                                                 (
-                                                                                                                 1. - alpha) / alpha)
+
+
+
+
+
     else:
         _random = np.random.RandomState(seed)
         W = _random.exponential(1, shape)
         U = _random.uniform(-np.pi / 2., np.pi / 2., shape)
 
         c = -beta * np.tan(np.pi * alpha / 2.)
-        if beta != 1:
+        if alpha != 1:
             ksi = 1 / alpha * np.arctan(-c)
+            res = ((1. + c ** 2) ** (1. / 2. * alpha)) * np.sin(alpha * (U + ksi)) / ((np.cos(U)) ** (1. / alpha)) \
+                  * ((np.cos(U - alpha * (U + ksi))) / W) ** ((1. - alpha) / alpha)
+
         else:
             ksi = np.pi / 2.
+            res = (1. / ksi) * ((np.pi / 2. + beta * U) * np.tan(U) -
+                                beta * np.log((np.pi / 2. * W * np.cos(U)) / (np.pi / 2. + beta * U)))
 
-        res = ((1. + c ** 2) ** (1. / 2. / alpha)) * np.sin(alpha * (U + ksi)) / ((np.cos(U)) ** (1. / alpha)) * ((
-                                                                                                                      np.cos(
-                                                                                                                          U - alpha * (
-                                                                                                                              U + ksi))) / W) ** (
-                                                                                                                     (
-                                                                                                                         1. - alpha) / alpha)
+
+
 
     return res * sigma + mu
 
