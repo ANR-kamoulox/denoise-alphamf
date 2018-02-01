@@ -7,7 +7,7 @@ files =  sorted(glob.glob(os.path.join(datadir,'*0db.wav')))
 for filename in files:
     print(filename)
     (sig,fs) = wav.wavread(filename)
-    sig = sig[0*fs:40*fs,:]
-    separated = denoise.alpha_denoise(sig, L = 10, alpha = 1.9, sigma = 1e-4,
+    sig = sig[35*fs:45*fs,:]
+    separated = denoise.alpha_denoise(sig, L = 100, alpha = 1.9, sigma = 5e-5,
                                       nmh = 10, burnin = False, name = os.path.basename(filename))
     wav.wavwrite(separated,fs,'test.wav')

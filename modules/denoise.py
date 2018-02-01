@@ -39,6 +39,9 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
     X = stft(sig.T, nperseg=nfft)[-1]
     X = np.moveaxis(X,0,2)
 
+    sigma = np.percentile(np.mean(np.abs(X)**(alpha/2.),axis=2),50,axis = 1)**2 * 5.
+    print(sigma)
+
     Xconj = X.conj()
     (F, T, K) = X.shape
 
@@ -58,7 +61,7 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
     def compute_Cs():
         return np.dot(W,H)[...,None,None] * R[:,None,...]
     def compute_Cn(impulses):
-        return sigma * impulses[...,None,None] * Id[None,None,...]
+        return sigma[:,None,None,None] * impulses[...,None,None] * Id[None,None,...]
     def dot(M,C):
         """M and C are ...x K x K"""
         return np.einsum('...ab,...bc->...ac',M,C)
