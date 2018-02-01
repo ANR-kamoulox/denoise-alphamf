@@ -137,16 +137,14 @@ def alpha_denoise(sig, L, alpha,name):
         Varxphi = np.mean(Varxphi, axis=1) #(F, K, K)
 
         (eig_values, eig_vectors) = np.linalg.eig(Varxphi)
+        idx = eig_values.argsort(axis = -1)[:,::-1]
         U = np.zeros((F, K)).astype(np.complex64) #(F,K) which contains principal eigenvectors
         for f in range(F):
-            indice = np.nonzero(eig_values[f].max())
-            U[f] = eig_vectors[f,indice[0]]
+            index = np.argmax(eig_values[f])
+            U[f] = eig_vectors[f,:,index]
 
-        S =np.sum((U.T).conj()[..., None] * Ys, axis=0)  # (F, T)
+        S = np.sum((U.T).conj()[..., None] * Ys, axis=0)  # (F, T)
         speech_estimate = np.array(istft(S)[1])[:N]
-
-
-
 
         from . import wav
         wav.wavwrite(target_estimate,16000,"denoise"+name,verbose=False)
