@@ -18,7 +18,7 @@ def invert(M, eps):
     invM[..., 1, 1] = invDet*M[..., 0, 0]
     return invM, np.abs(detM)
 
-def alpha_denoise(sig, L, alpha,name):
+def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav'):
     """Denoising with the multichannel alpha-stable + NMF model.
     sig is N X K
     L is the number of components """
@@ -28,18 +28,16 @@ def alpha_denoise(sig, L, alpha,name):
 
     # parameters
     nfft = 1024
-    niter = 40
-    nmh = 40
-    nmh_burnin = 30
+    niter = 10
+    if burnin:
+        nmh_burnin = nmh * 0.5
+    else:
+        nmh_burnin = 0
 
     # compute STFT of Mixture
     N = sig.shape[0]  # remember number of samples for future use
     X = stft(sig.T, nperseg=nfft)[-1]
     X = np.moveaxis(X,0,2)
-
-    sigma = 2e-6
-    #sigma = np.percentile(np.abs(X), 30)
-    print(sigma)
 
     Xconj = X.conj()
     (F, T, K) = X.shape
@@ -81,7 +79,6 @@ def alpha_denoise(sig, L, alpha,name):
         P = np.zeros((F,T,K,K),dtype=np.complex128)
         Cs = compute_Cs()
 
-        #import ipdb; ipdb.set_trace()
         count = 0
         for i in tqdm.tqdm(range(nmh)):
             # draw new phi
@@ -94,7 +91,6 @@ def alpha_denoise(sig, L, alpha,name):
                      dot(dot(Xconj[...,None,:],invCx_n),X[...,None])
                    - dot(dot(Xconj[...,None,:],invCx),X[...,None]),
                       )))
-            #import ipdb; ipdb.set_trace()
 
             a = np.minimum(1.,a)
             u = np.random.rand(F,T)
@@ -111,10 +107,6 @@ def alpha_denoise(sig, L, alpha,name):
 
         O /= float(count)
         P /= float(count)
-
-        # for the last iteration, we just need the MCMC part
-        if it == niter:
-            break
 
         # now separate sources
         G = np.zeros((F,T,K,K), dtype='complex64')
@@ -133,10 +125,9 @@ def alpha_denoise(sig, L, alpha,name):
         target_estimate = istft(Ys)[1].T[:N, :]
 
         # Stereo to mono stuff
-        Varxphi = CxxC(G) + Cs - dot(G,Cs) #(F, T, K, K) Total variation
-        Varxphi = np.mean(Varxphi, axis=1) #(F, K, K)
-
-        (eig_values, eig_vectors) = np.linalg.eig(Varxphi)
+        Cy_post = CxxC(G) + Cs - dot(G,Cs) #(F, T, K, K) Total variance
+        Cy_post_mean = np.mean(Cy_post, axis=1) #(F, K, K)
+        (eig_values, eig_vectors) = np.linalg.eig(Cy_post_mean)
         idx = eig_values.argsort(axis = -1)[:,::-1]
         U = np.zeros((F, K)).astype(np.complex64) #(F,K) which contains principal eigenvectors
         for f in range(F):
@@ -150,7 +141,12 @@ def alpha_denoise(sig, L, alpha,name):
         wav.wavwrite(target_estimate,16000,"denoise"+name,verbose=False)
         wav.wavwrite(speech_estimate[:,None], 16000, "speech"+name, verbose=False)
 
-        # 2/ update of  NMF Parameters
+        # for the last iteration, we don't update model parameters
+        if it == niter:
+            break
+
+
+        # update of  NMF Parameters
         def trRM(R,M):
             """ utilitary function to compute the trace of R times M
             R is FxKxK and M is FxTxKxK"""
@@ -179,9 +175,10 @@ def alpha_denoise(sig, L, alpha,name):
         Cx = compute_Cs() + compute_Cn(I)
         (invCx, detCx) = invert(Cx,eps)
 
-
         #update the R
-        v = np.dot(W,H)[...,None,None] #spectrogram model F x T x 1 x 1
+        R = np.sum(Cy_post,axis = 1)/np.sum(np.dot(W,H),1)[...,None,None] +1e-5*R0
+
+        """v = np.dot(W,H)[...,None,None] #spectrogram model F x T x 1 x 1
         A = np.sum(v*O,axis = 1) # FxKxK
         B = dot( dot(R, np.sum(v*P,axis=1)), R)
         zeros = np.zeros((F,K,K))
@@ -199,7 +196,7 @@ def alpha_denoise(sig, L, alpha,name):
             UH[f,...] = eig_vectors[f,:K,indices[0][:K]]
             UG[f,...] = eig_vectors[f,K:,indices[0][:K]]
 
-        R = dot(UG, invert(UH,eps)[0])+1e-5*R0
+        R = dot(UG, invert(UH,eps)[0])+1e-5*R0"""
 
         #R = 0.5*(R+np.einsum('fab->fba',R.conj()))
         #R /= np.trace(R,axis1=1,axis2=2)[...,None,None]
