@@ -27,8 +27,8 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
     eps = np.finfo(np.float).eps
 
     # parameters
-    nfft = 1024
-    niter = 10
+    nfft = 2048
+    niter = 20
     if burnin:
         nmh_burnin = nmh * 0.5
     else:
@@ -39,7 +39,7 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
     X = stft(sig.T, nperseg=nfft)[-1]
     X = np.moveaxis(X,0,2)
 
-    sigma = np.percentile(np.mean(np.abs(X)**(alpha/2.),axis=2),50,axis = 1)**2 * 5.
+    sigma = np.percentile(np.mean(np.abs(X)**(alpha/2.),axis=2),70,axis = 1)**2 
     print(sigma)
 
     Xconj = X.conj()
@@ -179,6 +179,7 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
         (invCx, detCx) = invert(Cx,eps)
 
         #update the R
+        #R = np.sum(Cy_post/I[...,None,None],axis = 1)/np.sum(np.dot(W,H)/I[...],1)[...,None,None] +1e-5*R0
         R = np.sum(Cy_post,axis = 1)/np.sum(np.dot(W,H),1)[...,None,None] +1e-5*R0
 
         """v = np.dot(W,H)[...,None,None] #spectrogram model F x T x 1 x 1
