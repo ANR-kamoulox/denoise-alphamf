@@ -2,8 +2,7 @@ import numpy as np
 import itertools
 from scipy.signal import stft, istft
 from . import stable
-from . import beta_ntf
-from numpy.linalg import norm
+import tqdm
 
 def invert(M, eps):
     """"inverting matrices M (matrices are the two last dimensions).
@@ -18,44 +17,55 @@ def invert(M, eps):
     invM[..., 1, 1] = invDet*M[..., 0, 0]
     return invM, np.abs(detM)
 
-def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav'):
+def alpha_denoise(mixture, L, alpha,nmh = 30, burnin=False,  niter = 10, vad = None, true_speech=None, true_noise=None):
     """Denoising with the multichannel alpha-stable + NMF model.
-    sig is N X K
+    mixture is N X K
     L is the number of components """
 
     # to avoid dividing by zero
-    eps = np.finfo(np.float).eps
+    eps = 1e-20#np.finfo(np.float64).eps
 
     # parameters
-    nfft = 2048
-    niter = 20
+    nfft = 1024
     if burnin:
-        nmh_burnin = nmh * 0.5
+        nmh_burnin = nmh * 3./4.
     else:
         nmh_burnin = 0
 
     # compute STFT of Mixture
-    N = sig.shape[0]  # remember number of samples for future use
-    X = stft(sig.T, nperseg=nfft)[-1]
+    N = mixture.shape[0]  # remember number of samples for future use
+    (frame_times, X) = stft(mixture.T, nperseg=nfft, noverlap = nfft*3/4)[-2:]
+    S = stft(true_speech.T, nperseg=nfft, noverlap = nfft*3/4)[-1]
+    R = stft(true_noise.T, nperseg=nfft, noverlap = nfft*3/4)[-1]
     X = np.moveaxis(X,0,2)
-
-    sigma = np.percentile(np.mean(np.abs(X)**(alpha/2.),axis=2),70,axis = 1)**2 
-    print(sigma)
+    S = np.moveaxis(S,0,2)
+    Z = np.moveaxis(R,0,2)
 
     Xconj = X.conj()
     (F, T, K) = X.shape
 
-    # Allocate variables
-    # W,H: NMF parameters, R: Spatial Covarianc Matrices for target
     # I: impulse variables for noise
-    W = np.random.rand(F,L)
-    H = np.random.rand(L,T)
+    sigmaI = 2.*np.cos(np.pi*alpha/4.)**(2./alpha)
+    I = stable.random(alpha/2., 1, 0, sigmaI, (F,T))
+
+    # W,H: NMF parameters
+    W = np.random.rand(F,L)+0.5
+    H = np.random.rand(L,T)+0.5
+    if vad is not None:
+        from scipy.interpolate import interp1d
+        vad_function = interp1d(range(N), np.squeeze(vad), 'nearest',bounds_error = False, fill_value=(vad[0],vad[-1]))
+        vad_values = vad_function(frame_times)
+        H *= vad_values[None,:]
+        voice_inactive = np.nonzero(1.-vad_values)[0]
+        sigma = np.mean(np.mean(np.abs(X[:,voice_inactive,:])**(alpha/2.),axis=2), axis = 1)**2
+    else:
+        voice_active = np.range(N)
+        sigma = np.percentile(np.mean(np.abs(X)**(alpha/2.),axis=2),70,axis = 1)**2
+
+    #R: Spatial Covarianc Matrices for target
     Id = np.eye(K,dtype='complex64')
     R = np.tile(Id[None,...],(F,1,1))
     R0 = R
-    sigmaI = 2.*np.cos(np.pi*alpha/4.)**(2./alpha)
-    #I = np.ones((F,T))
-    I = stable.random(alpha/2., 1, 0, sigmaI, (F,T))
 
     #helper function for computing the sources covariances
     def compute_Cs():
@@ -74,14 +84,15 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
     Cx = Cs + compute_Cn(I)
     (invCx, detCx) = invert(Cx,eps)
 
-    import tqdm
     for it in tqdm.tqdm(range(niter+1)):
         # 1/ Metropolis Hasting sampling for the impulses
         # utilitary variables for the expectations wrt phi
+
         O = np.zeros((F,T,K,K),dtype=np.complex128)
         P = np.zeros((F,T,K,K),dtype=np.complex128)
         Cs = compute_Cs()
 
+        # Metropolis Hastings loop
         count = 0
         for i in tqdm.tqdm(range(nmh)):
             # draw new phi
@@ -94,12 +105,14 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
                      dot(dot(Xconj[...,None,:],invCx_n),X[...,None])
                    - dot(dot(Xconj[...,None,:],invCx),X[...,None]),
                       )))
-
             a = np.minimum(1.,a)
+
+            # pick the elements that are changed
             u = np.random.rand(F,T)
             changed = np.nonzero(u<=a)
-            #print(float(len(changed[0]))/u.size)
 
+            # update the corresponding impulses and covariances inverses and
+            # determinants
             I[changed]=Inew[changed]
             invCx[changed] = invCx_n[changed]
             detCx[changed] = detCx_n[changed]
@@ -108,106 +121,78 @@ def alpha_denoise(sig, L, alpha, sigma, nmh = 30, burnin=False, name='test.wav')
                 O += invCx
                 P += CxxC(invCx)
 
-        O /= float(count)
-        P /= float(count)
+            O /= float(count)
+            P /= float(count)
 
-        # now separate sources
-        G = np.zeros((F,T,K,K), dtype='complex64')
-        Cs = compute_Cs()
-        for (i1, i2, i3) in itertools.product(range(K), range(K), range(K)):
-                G[..., i1, i2] += Cs[..., i1, i3]*O[..., i3, i2]
-
-        # separates by (matrix-)multiplying this gain with the mix.
-        Ys = 0
-        for k in range(K):
-            Ys += G[..., k]*X[..., k, None]
-
-
-        # inverte to time domain and return signal
-        Ys = np.rollaxis(Ys, -1)  # gets channels back in first position
-        target_estimate = istft(Ys)[1].T[:N, :]
-
-        # Stereo to mono stuff
+        # 2/ Compute posterior statistics for target
+        G = dot(Cs,O)
         Cy_post = CxxC(G) + Cs - dot(G,Cs) #(F, T, K, K) Total variance
-        Cy_post_mean = np.mean(Cy_post, axis=1) #(F, K, K)
-        (eig_values, eig_vectors) = np.linalg.eig(Cy_post_mean)
-        idx = eig_values.argsort(axis = -1)[:,::-1]
-        U = np.zeros((F, K)).astype(np.complex64) #(F,K) which contains principal eigenvectors
-        for f in range(F):
-            index = np.argmax(eig_values[f])
-            U[f] = eig_vectors[f,:,index]
-
-        S = np.sum((U.T).conj()[..., None] * Ys, axis=0)  # (F, T)
-        speech_estimate = np.array(istft(S)[1])[:N]
-
-        from . import wav
-        wav.wavwrite(target_estimate,16000,"denoise"+name,verbose=False)
-        wav.wavwrite(speech_estimate[:,None], 16000, "speech"+name, verbose=False)
 
         # for the last iteration, we don't update model parameters
         if it == niter:
             break
 
-
         # update of  NMF Parameters
         def trRM(R,M):
             """ utilitary function to compute the trace of R times M
             R is FxKxK and M is FxTxKxK"""
-            res = np.zeros((F,T),dtype = np.complex128)
+            res = np.zeros((F,T),dtype = np.complex)
             for k in range(K):
                 res += np.sum(R[:,None,k,:] * M[...,k], axis = -1)
             return res
 
-        zp = np.maximum(eps, trRM(R,P).real)
-        zo = np.maximum(eps, trRM(R,O).real)
+        zp = np.maximum(0, trRM(R,P).real)
+        zo = np.maximum(0, trRM(R,O).real)
+        #from numpy.linalg import norm
         #print('\n',norm(zp),norm(zo),'normes zp zo')
 
         #update W
         num = np.dot(zp,H.T)
         denum = np.dot(zo,H.T)
-        W = W *  np.sqrt((eps+num)/(eps+denum))
-        #print('\n',norm(num),norm(denum),'normes num denum W')
+        W *=  np.sqrt((eps+num)/(eps+denum))
 
         #update H
         num = np.dot(W.T,zp)
         denum = np.dot(W.T,zo)
         H *= np.sqrt((eps+num)/(eps+denum))
-        #print('\n',norm(num),norm(denum),'normes num denum H')
+
+        #print(np.mean(np.dot(W,H)[100:,:],axis = 1))
+        #update the R
+        R = np.sum(Cy_post,axis = 1)/(eps+np.sum(np.dot(W,H),1)[...,None,None]) +1e-5*R0
 
         # update our model for the mix covariance matrix
         Cx = compute_Cs() + compute_Cn(I)
         (invCx, detCx) = invert(Cx,eps)
 
-        #update the R
-        #R = np.sum(Cy_post/I[...,None,None],axis = 1)/np.sum(np.dot(W,H)/I[...],1)[...,None,None] +1e-5*R0
-        R = np.sum(Cy_post,axis = 1)/np.sum(np.dot(W,H),1)[...,None,None] +1e-5*R0
+    # separates to get the image
+    Y_mix = np.squeeze(dot(G, X[...,None]))
+    print(X.shape,S.shape,R.shape)
+    Y_s = np.squeeze(dot(G, S[...,None]))
+    Y_z = np.squeeze(dot(G, Z[...,None]))
 
-        """v = np.dot(W,H)[...,None,None] #spectrogram model F x T x 1 x 1
-        A = np.sum(v*O,axis = 1) # FxKxK
-        B = dot( dot(R, np.sum(v*P,axis=1)), R)
-        zeros = np.zeros((F,K,K))
-        block_matrix = np.concatenate(
-            (np.concatenate((zeros, -B),axis = 1),
-            np.concatenate((-A, zeros),axis = 1)), axis = 2)
-        (eig_values,eig_vectors) = np.linalg.eig(block_matrix)
-
-        UH = np.zeros((F,K,K),dtype = np.complex128)
-        UG = np.zeros((F,K,K),dtype = np.complex128)
+    def compute_beamformer(C_post_mean):
+        # compute the eigenvalues
+        (eig_values, eig_vectors) = np.linalg.eig(C_post_mean)
+        # The beamformer maximizing energy is the principal eigenvector for
+        # each frequency
+        U = np.zeros((F, K)).astype(np.complex)
         for f in range(F):
-            indices = np.nonzero(eig_values[f] <= 0)
-            if not len(indices[0]):
-                import ipdb; ipdb.set_trace()
-            UH[f,...] = eig_vectors[f,:K,indices[0][:K]]
-            UG[f,...] = eig_vectors[f,K:,indices[0][:K]]
+            index = np.argmax(eig_values[f])
+            U[f] = eig_vectors[f,:,index]
+        return U
 
-        R = dot(UG, invert(UH,eps)[0])+1e-5*R0"""
+    # Speech output
+    #-----------------
+    # Compute the average total posterior covariance
+    Cy_post_mean = np.mean(Cy_post, axis=1) #(F, K, K)
+    U = compute_beamformer(Cy_post_mean)
 
-        #R = 0.5*(R+np.einsum('fab->fba',R.conj()))
-        #R /= np.trace(R,axis1=1,axis2=2)[...,None,None]
+    # now apply the beamformer
+    S_temp = np.sum((U[:,None,:]).conj() * Y_mix, axis=-1)[None,...]  # (F, T)
+    target_in_mix = np.array(istft(S_temp,nperseg=nfft, noverlap = nfft*3/4)[1]).T[:N]
+    S_temp = np.sum((U[:,None,:]).conj() * Y_s, axis=-1)[None,...]  # (F, T)
+    target_in_S = np.array(istft(S_temp,nperseg=nfft, noverlap = nfft*3/4)[1]).T[:N]
+    S_temp = np.sum((U[:,None,:]).conj() * Y_z, axis=-1)[None,...]  # (F, T)
+    target_in_Z = np.array(istft(S_temp,nperseg=nfft, noverlap = nfft*3/4)[1]).T[:N]
 
-        # Update our model for the mix covariance matrix
-        Cx = compute_Cs() + compute_Cn(I)
-        (invCx, detCx) = invert(Cx,eps)
-
-
-    return target_estimate
+    return target_in_mix, target_in_S, target_in_Z
