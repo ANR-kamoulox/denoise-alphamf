@@ -104,7 +104,7 @@ class BetaNTF:
                           self.score(X)))
                 tick = time.time()
 
-            #updating each factor in turn
+            # updating each factor in turn
             for dim in range(ndims):
                 if dim in self.fixed_factors:
                     continue
@@ -244,15 +244,15 @@ if __name__ == '__main__':
     # Fit the model
     beta_ntf.fit(V)
 
-    #Print resulting score
+    # Print resulting score
     print('Resulting score', beta_ntf.score(V))
-    print('Compression ratio : %0.1f%%'%((1.-sum(beta_ntf.data_shape)*
+    print('Compression ratio : %0.1f%%' % ((1.-sum(beta_ntf.data_shape)*
                         beta_ntf.n_components
                         /float(np.prod(beta_ntf.data_shape)))*100.))
 
 
-    #Now illustrate the get model
-    total_model= parafac(beta_ntf.factors_)
-    two_components = beta_ntf[...,:2]
-    print('Shape of total_model : ',total_model.shape)
-    print('Shape of two_components : ',two_components.shape)
+    # Now illustrate the get model
+    total_model = parafac(beta_ntf.factors_)
+    two_components = beta_ntf[..., :2]
+    print('Shape of total_model : ', total_model.shape)
+    print('Shape of two_components : ', two_components.shape)
